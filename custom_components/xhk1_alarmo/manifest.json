@@ -1,0 +1,11 @@
+{
+  "domain": "xhk1_alarmo",
+  "name": "XHK1 Alarmo Keypad",
+  "codeowners": [],
+  "config_flow": true,
+  "dependencies": ["mqtt"],
+  "documentation": "https://github.com/aervig/xhk1_alarmo",
+  "iot_class": "local_push",
+  "requirements": [],
+  "version": "1.0.0"
+}

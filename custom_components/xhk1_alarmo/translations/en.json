@@ -1,0 +1,24 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "XHK1 Alarmo Keypad",
+        "description": "Connect the XHK1 Zigbee keypad to Alarmo via Zigbee2MQTT.",
+        "data": {
+          "mqtt_topic": "Zigbee2MQTT device name (friendly name)",
+          "alarmo_entity": "Alarmo entity"
+        },
+        "data_description": {
+          "mqtt_topic": "Example: 0x00158d00012345ab or the friendly name you gave the device in Zigbee2MQTT.",
+          "alarmo_entity": "Select the alarm_control_panel entity created by Alarmo."
+        }
+      }
+    },
+    "error": {
+      "no_alarm_entity": "No alarm_control_panel entities found. Make sure Alarmo is installed and configured."
+    },
+    "abort": {
+      "already_configured": "This keypad and alarm panel combination is already configured."
+    }
+  }
+}

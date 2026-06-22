@@ -1,0 +1,24 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "XHK1 Alarmo Keypad",
+        "description": "Koble XHK1 Zigbee-tastaturet til Alarmo via Zigbee2MQTT.",
+        "data": {
+          "mqtt_topic": "Zigbee2MQTT enhetsnavn (friendly name)",
+          "alarmo_entity": "Alarmo-enhet"
+        },
+        "data_description": {
+          "mqtt_topic": "Eksempel: 0x00158d00012345ab eller det vennlige navnet du ga enheten i Zigbee2MQTT.",
+          "alarmo_entity": "Velg alarm_control_panel-entiteten som Alarmo har opprettet."
+        }
+      }
+    },
+    "error": {
+      "no_alarm_entity": "Ingen alarm_control_panel-entiteter funnet. Kontroller at Alarmo er installert og konfigurert."
+    },
+    "abort": {
+      "already_configured": "Denne kombinasjonen av tastatur og alarmsentral er allerede konfigurert."
+    }
+  }
+}
