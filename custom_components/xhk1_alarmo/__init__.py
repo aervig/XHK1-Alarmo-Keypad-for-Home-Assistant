@@ -23,6 +23,7 @@ from typing import Any
 from homeassistant.components import mqtt
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import Event, HomeAssistant, callback
+from homeassistant.exceptions import ServiceNotFound
 
 from .const import (
     ACTION_TO_ALARMO_MODE,
@@ -44,6 +45,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     state_topic = f"zigbee2mqtt/{device_name}"
     set_topic = f"zigbee2mqtt/{device_name}/set"
 
+    _LOGGER.info(
+        "XHK1 Alarmo Keypad starter: tastatur='%s', alarmo='%s'",
+        device_name,
+        alarmo_entity,
+    )
+
     # ------------------------------------------------------------------
     # Hjelper: send arm_mode-melding til tastaturet
     # ------------------------------------------------------------------
@@ -57,31 +64,91 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             set_topic,
             json.dumps({"arm_mode": payload}),
         )
-        _LOGGER.debug("Sendte arm_mode=%s (transaction=%s) til %s", mode, transaction, set_topic)
+        _LOGGER.info("→ Tastatur: arm_mode=%s (transaction=%s)", mode, transaction)
 
     # ------------------------------------------------------------------
-    # Hjelper: vent på at Alarmo-enheten endrer tilstand
+    # Hjelper: vent på tilstandsendring eller arm-feil fra Alarmo.
+    # Lyttere registreres FØR service-kallet for å unngå race condition.
+    # Returnerer True ved suksess, False ved feil eller timeout.
     # ------------------------------------------------------------------
-    async def wait_for_state_change(from_state: str | None) -> bool:
-        """Returner True hvis Alarmo endrer tilstand innen timeout."""
-        changed = asyncio.Event()
+    async def call_alarmo_and_wait(
+        service: str,
+        service_data: dict[str, Any],
+        from_state: str | None,
+        *,
+        watch_arm_failed: bool = False,
+    ) -> bool:
+        state_ok = asyncio.Event()
+        arm_failed = asyncio.Event()
 
         @callback
-        def _listener(event: Event) -> None:
+        def _on_state_change(event: Event) -> None:
             if event.data.get("entity_id") != alarmo_entity:
                 return
             new = event.data.get("new_state")
             if new and new.state != from_state:
-                changed.set()
+                state_ok.set()
 
-        unsub = hass.bus.async_listen("state_changed", _listener)
+        @callback
+        def _on_arm_failed(_event: Event) -> None:
+            arm_failed.set()
+
+        # Registrer lyttere FØR vi kaller tjenesten
+        unsub_state = hass.bus.async_listen("state_changed", _on_state_change)
+        unsub_failed = (
+            hass.bus.async_listen("alarmo_failed_to_arm", _on_arm_failed)
+            if watch_arm_failed
+            else None
+        )
+
         try:
-            await asyncio.wait_for(changed.wait(), timeout=STATE_CHANGE_TIMEOUT)
-            return True
-        except asyncio.TimeoutError:
+            await hass.services.async_call(
+                "alarmo", service, service_data, blocking=False
+            )
+        except ServiceNotFound:
+            _LOGGER.error(
+                "Tjenesten 'alarmo.%s' finnes ikke. "
+                "Er Alarmo installert og startet?",
+                service,
+            )
+            unsub_state()
+            if unsub_failed:
+                unsub_failed()
             return False
+
+        # Vent på første av: tilstandsendring, arm-feil eller timeout
+        wait_tasks: set[asyncio.Task] = {
+            asyncio.ensure_future(state_ok.wait()),
+        }
+        if watch_arm_failed:
+            wait_tasks.add(asyncio.ensure_future(arm_failed.wait()))
+
+        try:
+            done, pending = await asyncio.wait(
+                wait_tasks,
+                timeout=STATE_CHANGE_TIMEOUT,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
         finally:
-            unsub()
+            for t in wait_tasks:
+                t.cancel()
+            unsub_state()
+            if unsub_failed:
+                unsub_failed()
+
+        if not done:
+            _LOGGER.warning(
+                "Timeout etter %.1fs – Alarmo svarte ikke (entity=%s)",
+                STATE_CHANGE_TIMEOUT,
+                alarmo_entity,
+            )
+            return False
+
+        if arm_failed.is_set():
+            _LOGGER.info("Alarmo avviste forespørselen (feil kode eller ikke klar)")
+            return False
+
+        return state_ok.is_set()
 
     # ------------------------------------------------------------------
     # Behandle arm-handling (arm_all_zones / arm_day_zones / arm_night_zones)
@@ -91,26 +158,28 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         current = hass.states.get(alarmo_entity)
         prev_state = current.state if current else None
 
-        await hass.services.async_call(
-            "alarmo",
-            "arm",
-            {"entity_id": alarmo_entity, "code": str(code), "mode": alarmo_mode},
-            blocking=False,
+        _LOGGER.info(
+            "← Tastatur: arm '%s' (alarmo_mode=%s, transaction=%s)",
+            action, alarmo_mode, transaction,
         )
 
-        success = await wait_for_state_change(prev_state)
+        success = await call_alarmo_and_wait(
+            "arm",
+            {"entity_id": alarmo_entity, "code": str(code), "mode": alarmo_mode},
+            prev_state,
+            watch_arm_failed=True,
+        )
 
         if success:
-            # 1. Bekreft forespørselen til tastaturet (med transaksjons-ID)
+            # 1. Bekreft forespørselen med transaksjons-ID
             await send_arm_mode(action, transaction)
-            # 2. Start pipetone – send exit_delay hvis Alarmo er i arming-modus.
-            #    Dersom Alarmo ikke har exit delay, vil tilstandslytteren under
-            #    sende riktig slutt-modus (arm_all_zones e.l.) automatisk.
-            new_state = hass.states.get(alarmo_entity)
-            if new_state and new_state.state == "arming":
+            # 2. Send exit_delay hvis Alarmo er i arming (exit delay aktiv)
+            #    → starter pipetone på tastaturet
+            new_alarmo_state = hass.states.get(alarmo_entity)
+            if new_alarmo_state and new_alarmo_state.state == "arming":
                 await send_arm_mode("exit_delay")
+            # Videre synk (arming → armed_*) håndteres av tilstandslytteren
         else:
-            _LOGGER.warning("Ugyldig kode eller arming mislyktes for %s", alarmo_entity)
             await send_arm_mode("invalid_code", transaction)
 
     # ------------------------------------------------------------------
@@ -119,24 +188,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     async def handle_disarm_action(code: str, transaction: int) -> None:
         current = hass.states.get(alarmo_entity)
         if current and current.state == "disarmed":
+            _LOGGER.info("← Tastatur: disarm – allerede disarmet")
             await send_arm_mode("already_disarmed", transaction)
             return
 
         prev_state = current.state if current else None
+        _LOGGER.info("← Tastatur: disarm (transaction=%s)", transaction)
 
-        await hass.services.async_call(
-            "alarmo",
+        success = await call_alarmo_and_wait(
             "disarm",
             {"entity_id": alarmo_entity, "code": str(code)},
-            blocking=False,
+            prev_state,
+            watch_arm_failed=False,
         )
-
-        success = await wait_for_state_change(prev_state)
 
         if success:
             await send_arm_mode("disarm", transaction)
         else:
-            _LOGGER.warning("Ugyldig kode eller disarm mislyktes for %s", alarmo_entity)
             await send_arm_mode("invalid_code", transaction)
 
     # ------------------------------------------------------------------
@@ -157,13 +225,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         code = str(payload.get("action_code", ""))
         transaction = int(payload.get("action_transaction", 0))
 
-        _LOGGER.debug("Mottok handling '%s' fra XHK1 (transaksjon=%s)", action, transaction)
-
         if action == "disarm":
             hass.async_create_task(handle_disarm_action(code, transaction))
         elif action in ACTION_TO_ALARMO_MODE:
             hass.async_create_task(handle_arm_action(action, code, transaction))
         elif action == "emergency":
+            _LOGGER.warning("← Tastatur: NØDALARM")
             hass.async_create_task(
                 hass.services.async_call(
                     "alarm_control_panel",
@@ -173,7 +240,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 )
             )
         elif action == "identify":
-            _LOGGER.debug("XHK1 identify mottatt – ingen handling nødvendig")
+            _LOGGER.debug("← Tastatur: identify")
 
     # ------------------------------------------------------------------
     # Tilstandslytter: Alarmo-endringer → oppdater tastaturets display
@@ -188,8 +255,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         keypad_mode = ALARMO_STATE_TO_KEYPAD_MODE.get(new_state.state)
         if keypad_mode:
-            _LOGGER.debug(
-                "Alarmo → %s: sender arm_mode=%s til tastaturet",
+            _LOGGER.info(
+                "Alarmo: %s → sender arm_mode=%s til tastatur",
                 new_state.state,
                 keypad_mode,
             )
@@ -210,6 +277,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if initial:
         keypad_mode = ALARMO_STATE_TO_KEYPAD_MODE.get(initial.state)
         if keypad_mode:
+            _LOGGER.info("Sender starttilstand arm_mode=%s til tastatur", keypad_mode)
             hass.async_create_task(send_arm_mode(keypad_mode))
 
     return True
