@@ -1,7 +1,7 @@
 # XHK1 Alarmo Keypad
 
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://hacs.xyz)
-[![GitHub Release](https://img.shields.io/github/v/release/aervig/xhk1_alarmo)](https://github.com/aervig/xhk1_alarmo/releases)
+[![GitHub Release](https://img.shields.io/github/v/release/aervig/XHK1-Alarmo-Keypad-for-Home-Assistant)](https://github.com/aervig/XHK1-Alarmo-Keypad-for-Home-Assistant/releases)
 
 Home Assistant custom integration that connects the **Xfinity XHK1 Zigbee keypad** (via Zigbee2MQTT) to **Alarmo**.
 
@@ -25,7 +25,7 @@ Home Assistant custom integration that connects the **Xfinity XHK1 Zigbee keypad
 
 ### One-click via HACS (recommended)
 
-[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=aervig&repository=xhk1_alarmo&category=integration)
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=aervig&repository=XHK1-Alarmo-Keypad-for-Home-Assistant&category=integration)
 
 1. Click the button above – it opens HACS with this repository pre-filled.
 2. Click **Download**.
@@ -34,7 +34,7 @@ Home Assistant custom integration that connects the **Xfinity XHK1 Zigbee keypad
 ### Manual HACS
 
 1. Open HACS → **Integrations** → menu (⋮) → **Custom repositories**
-2. Add `https://github.com/aervig/xhk1_alarmo` as type **Integration**
+2. Add `https://github.com/aervig/XHK1-Alarmo-Keypad-for-Home-Assistant` as type **Integration**
 3. Search for **XHK1 Alarmo Keypad** and install
 4. Restart Home Assistant
 
